@@ -30,6 +30,7 @@ void setup() {
   finger.getTemplateCount();
 
   nextID = finger.templateCount + 1;
+  if (nextID > 127) nextID = 1; // Ensure ID does not exceed sensor limit
 
   Serial.print("Sensor contains ");
   Serial.print(finger.templateCount);
@@ -39,25 +40,7 @@ void setup() {
 
 void loop() {
   checkFingerprint();
-
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
-
-    if (command.startsWith("ENROLL:")) {
-      uint8_t enrollID = command.substring(7).toInt();
-      if (enrollID <= 0 || enrollID > 127) {
-        Serial.println("Invalid ID. Must be 1-127.");
-        Serial.println("NewID:-1");
-      } else {
-        enrollFingerprint(enrollID);
-      }
-    } else if (command == "SCAN") {
-      checkFingerprint();
-    } else if (command == "CLEARFP") {
-      clearAllFingerprints();
-    }
-  }
+  delay(500);
 }
 
 void checkFingerprint() {
@@ -86,7 +69,7 @@ void checkFingerprint() {
     Serial.println("Fingerprint not found - enrolling new fingerprint...");
     if (enrollNewFingerprint()) {
       Serial.print("NewID:");
-      Serial.println(nextID - 1); 
+      Serial.println(nextID - 1); // ID used in last enrollment
     } else {
       Serial.println("Enrollment failed");
       Serial.println("NewID:-1");
@@ -94,12 +77,15 @@ void checkFingerprint() {
   } else {
     Serial.println("Communication error");
   }
-  delay(500);
 }
 
 bool enrollNewFingerprint() {
-  uint8_t id = nextID++;
+  if (nextID > 127) {
+    Serial.println("Sensor full! Cannot enroll more fingerprints.");
+    return false;
+  }
 
+  uint8_t id = nextID++;
   Serial.print("Enrolling ID #");
   Serial.println(id);
 
@@ -131,52 +117,13 @@ bool enrollNewFingerprint() {
   return true;
 }
 
-void enrollFingerprint(uint8_t id) {
-  Serial.println("Starting enrollment for ID: " + String(id));
-  int result = getFingerprintEnroll(id);
-  if (result == FINGERPRINT_OK) {
-    Serial.println("Enrollment successful!");
-    Serial.print("NewID:");
-    Serial.println(id);
-  } else {
-    Serial.println("Enrollment failed");
-    Serial.println("NewID:-1");
-  }
-}
-
-uint8_t getFingerprintEnroll(uint8_t id) {
-  uint8_t p = FINGERPRINT_NOFINGER;
-
-  Serial.println("Place finger for first scan...");
-  while (p != FINGERPRINT_OK) p = finger.getImage();
-
-  p = finger.image2Tz(1);
-  if (p != FINGERPRINT_OK) return p;
-
-  Serial.println("Remove finger...");
-  delay(2000);
-  while (finger.getImage() != FINGERPRINT_NOFINGER);
-
-  Serial.println("Place same finger again...");
-  p = FINGERPRINT_NOFINGER;
-  while (p != FINGERPRINT_OK) p = finger.getImage();
-
-  p = finger.image2Tz(2);
-  if (p != FINGERPRINT_OK) return p;
-
-  p = finger.createModel();
-  if (p != FINGERPRINT_OK) return p;
-
-  p = finger.storeModel(id);
-  return p;
-}
-
 void clearAllFingerprints() {
   Serial.println("Clearing sensor fingerprint database...");
   uint8_t p = finger.emptyDatabase();
   if (p == FINGERPRINT_OK) {
     Serial.println("All fingerprints deleted!");
     Serial.println("ClearFP:OK");
+    nextID = 1; // Reset nextID after clearing
   } else {
     Serial.println("Failed to clear fingerprints.");
     Serial.println("ClearFP:FAIL");

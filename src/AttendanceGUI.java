@@ -481,53 +481,33 @@ public class AttendanceGUI extends JFrame {
     
     private void enrollNewStudent(int fingerprintID) {
         hideProgressDialog();
-        
-        JPanel panel = new JPanel(new GridLayout(2, 2, 10, 10));
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        JTextField nameField = new JTextField(20);
-        JTextField idField = new JTextField(20);
-        
-        nameField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        idField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        
-        JLabel nameLabel = new JLabel("Student Name:");
-        JLabel idLabel = new JLabel("Student ID:");
-        nameLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        idLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        
-        panel.add(nameLabel);
-        panel.add(nameField);
-        panel.add(idLabel);
-        panel.add(idField);
-        
-        int result = JOptionPane.showConfirmDialog(this, panel, 
-            "New Fingerprint Detected - Enroll Student (FP ID: " + fingerprintID + ")", 
-            JOptionPane.OK_CANCEL_OPTION, 
-            JOptionPane.PLAIN_MESSAGE);
-        
-        if (result == JOptionPane.OK_OPTION) {
-            String studentName = nameField.getText().trim();
-            String studentID = idField.getText().trim();
-            
-            if (studentName.isEmpty()) {
-                studentName = "Student " + fingerprintID;
-            }
-            if (studentID.isEmpty()) {
-                studentID = "STU" + String.format("%04d", fingerprintID);
-            }
-            
-            String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-            tableModel.addRow(new Object[]{studentID, studentName, fingerprintID, "Present", currentTime});
-            saveStudentData();
-            
-            updateStatus("New student enrolled: " + studentName);
-            showStyledDialog(
-                "Student Enrolled Successfully!\n\nName: " + studentName + 
-                "\nStudent ID: " + studentID + 
-                "\nFingerprint ID: " + fingerprintID,
-                "Enrollment Success", 
-                JOptionPane.INFORMATION_MESSAGE);
+
+        String studentName = JOptionPane.showInputDialog(
+            this,
+            "Enter Student Name for Fingerprint ID: " + fingerprintID,
+            "New Student Enrollment",
+            JOptionPane.PLAIN_MESSAGE
+        );
+
+        if (studentName == null || studentName.trim().isEmpty()) {
+            studentName = "Student " + fingerprintID;
         }
+
+        // Auto-generate student ID based on fingerprint ID
+        String studentID = "STU" + String.format("%04d", fingerprintID);
+
+        String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        tableModel.addRow(new Object[]{studentID, studentName, fingerprintID, "Present", currentTime});
+        saveStudentData();
+
+        updateStatus("New student enrolled: " + studentName);
+        showStyledDialog(
+            "Student Enrolled Successfully!\n\nName: " + studentName +
+            "\nStudent ID: " + studentID +
+            "\nFingerprint ID: " + fingerprintID,
+            "Enrollment Success",
+            JOptionPane.INFORMATION_MESSAGE
+        );
     }
     
     private void showStyledDialog(String message, String title, int messageType) {
