@@ -30,7 +30,7 @@ void setup() {
   finger.getTemplateCount();
 
   nextID = finger.templateCount + 1;
-  if (nextID > 127) nextID = 1; // Ensure ID does not exceed sensor limit
+  if (nextID > 127) nextID = 1; 
 
   Serial.print("Sensor contains ");
   Serial.print(finger.templateCount);
@@ -69,7 +69,7 @@ void checkFingerprint() {
     Serial.println("Fingerprint not found - enrolling new fingerprint...");
     if (enrollNewFingerprint()) {
       Serial.print("NewID:");
-      Serial.println(nextID - 1); // ID used in last enrollment
+      Serial.println(nextID - 1); 
     } else {
       Serial.println("Enrollment failed");
       Serial.println("NewID:-1");
@@ -123,7 +123,7 @@ void clearAllFingerprints() {
   if (p == FINGERPRINT_OK) {
     Serial.println("All fingerprints deleted!");
     Serial.println("ClearFP:OK");
-    nextID = 1; // Reset nextID after clearing
+    nextID = 1; 
   } else {
     Serial.println("Failed to clear fingerprints.");
     Serial.println("ClearFP:FAIL");
