@@ -85,14 +85,28 @@ bool enrollNewFingerprint() {
     return false;
   }
 
-  uint8_t id = nextID++;
+  uint8_t id = nextID;
+
   Serial.print("Enrolling ID #");
   Serial.println(id);
 
-  int p = finger.image2Tz(1);
-  if (p != FINGERPRINT_OK) return false;
+  int p = -1;
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) continue;
+    if (p != FINGERPRINT_OK) {
+      Serial.println("Error capturing first image, try again");
+      delay(1000);
+    }
+  }
 
-  Serial.println("Remove finger");
+  p = finger.image2Tz(1);
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Error converting first image");
+    return false;
+  }
+
+  Serial.println("Remove finger...");
   delay(2000);
   while (finger.getImage() != FINGERPRINT_NOFINGER);
 
@@ -101,19 +115,32 @@ bool enrollNewFingerprint() {
   while (p != FINGERPRINT_OK) {
     p = finger.getImage();
     if (p == FINGERPRINT_NOFINGER) continue;
-    if (p != FINGERPRINT_OK) return false;
+    if (p != FINGERPRINT_OK) {
+      Serial.println("Error capturing second image, try again");
+      delay(1000);
+    }
   }
 
   p = finger.image2Tz(2);
-  if (p != FINGERPRINT_OK) return false;
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Error converting second image");
+    return false;
+  }
 
   p = finger.createModel();
-  if (p != FINGERPRINT_OK) return false;
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Error creating fingerprint model");
+    return false;
+  }
 
   p = finger.storeModel(id);
-  if (p != FINGERPRINT_OK) return false;
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Error storing fingerprint model");
+    return false;
+  }
 
   Serial.println("Enrollment successful!");
+  nextID++; 
   return true;
 }
 

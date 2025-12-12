@@ -25,7 +25,6 @@ public class AttendanceGUI extends JFrame {
     private JLabel progressLabel;
     private SerialPort serialPort;
     
-    // Modern color scheme
     private static final Color PRIMARY_COLOR = new Color(41, 128, 185);
     private static final Color SUCCESS_COLOR = new Color(39, 174, 96);
     private static final Color DANGER_COLOR = new Color(231, 76, 60);
@@ -493,7 +492,6 @@ public class AttendanceGUI extends JFrame {
             studentName = "Student " + fingerprintID;
         }
 
-        // Auto-generate student ID based on fingerprint ID
         String studentID = "STU" + String.format("%04d", fingerprintID);
 
         String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
@@ -571,8 +569,7 @@ public class AttendanceGUI extends JFrame {
         if (line.contains("Image taken") && !processingFingerprint) {
             processingFingerprint = true;
             showProgressDialog("Processing Fingerprint", "Capturing fingerprint image...");
-        } 
-        else if (processingFingerprint) {
+        } else if (processingFingerprint) {
             if (line.contains("enrolling new fingerprint")) {
                 updateProgressDialog("Enrolling new fingerprint...");
             } else if (line.contains("Remove finger")) {
@@ -589,35 +586,25 @@ public class AttendanceGUI extends JFrame {
                 updateProgressDialog("Fingerprint recognized! Marking attendance...");
             }
         }
-        
+
         if (line.startsWith("NewID:")) {
-            if (dialogOpen) {
-                System.out.println("Dialog already open, ignoring...");
-                hideProgressDialog();
-                return;
-            }
-            
             try {
-                String[] parts = line.split(":");
-                if (parts.length < 2) {
-                    System.out.println("Invalid NewID format: " + line);
+                int fingerprintID = Integer.parseInt(line.split(":")[1].trim());
+                
+                if (fingerprintID <= 0) {
+                    updateStatus("Enrollment failed. Try again.");
                     hideProgressDialog();
+                    processingFingerprint = false;
                     return;
                 }
-                
-                int fingerprintID = Integer.parseInt(parts[1].trim());
-                System.out.println("Processing fingerprint ID: " + fingerprintID);
-                
+
                 SwingUtilities.invokeLater(() -> {
-                    if (dialogOpen) {
-                        hideProgressDialog();
-                        return;
-                    }
+                    if (dialogOpen) return; 
                     
                     dialogOpen = true;
                     try {
                         int existingRow = findStudentByFingerprintID(fingerprintID);
-                        
+
                         if (existingRow != -1) {
                             markAttendance(existingRow, fingerprintID);
                         } else {
@@ -628,12 +615,13 @@ public class AttendanceGUI extends JFrame {
                     }
                 });
             } catch (NumberFormatException e) {
-                System.err.println("Error parsing fingerprint ID from: " + line);
+                System.err.println("Invalid fingerprint ID: " + line);
                 e.printStackTrace();
-                updateStatus("Error processing fingerprint data");
                 hideProgressDialog();
             }
-        } else if (line.contains("Found fingerprint sensor")) {
+        }
+
+        if (line.contains("Found fingerprint sensor")) {
             updateConnectionStatus("Sensor Ready", true);
             updateStatus("Fingerprint sensor connected and ready");
         } else if (line.contains("Waiting for valid finger")) {
