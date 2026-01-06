@@ -9,13 +9,18 @@ import com.fazecast.jSerialComm.SerialPort;
 import java.io.*;
 import java.util.ArrayList;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Timer;
+import java.util.TimerTask;
+import javax.swing.table.TableCellEditor;
 
 public class AttendanceGUI extends JFrame {
     private JTable studentTable;
     private DefaultTableModel tableModel;
     private SerialPort arduinoPort;
     private static final String DATA_FILE = "students.dat";
+    private static final String LAST_RESET_FILE = "last_reset.dat";
     private JLabel statusLabel;
     private JLabel connectionLabel;
     private volatile boolean dialogOpen = false;
@@ -23,11 +28,13 @@ public class AttendanceGUI extends JFrame {
     private JDialog progressDialog;
     private JProgressBar progressBar;
     private JLabel progressLabel;
-    private SerialPort serialPort;
+    private Timer resetTimer;
     
     private static final Color PRIMARY_COLOR = new Color(41, 128, 185);
     private static final Color SUCCESS_COLOR = new Color(39, 174, 96);
     private static final Color DANGER_COLOR = new Color(231, 76, 60);
+    private static final Color WARNING_COLOR = new Color(243, 156, 18);
+    private static final Color EDIT_COLOR = new Color(52, 152, 219);
     private static final Color BACKGROUND_COLOR = new Color(236, 240, 241);
     private static final Color CARD_COLOR = Color.WHITE;
     private static final Color TEXT_PRIMARY = new Color(44, 62, 80);
@@ -37,7 +44,7 @@ public class AttendanceGUI extends JFrame {
     
     public AttendanceGUI() {
         setTitle("Biometric Attendance System");
-        setSize(1000, 600);
+        setSize(1200, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         getContentPane().setBackground(BACKGROUND_COLOR);
@@ -51,7 +58,7 @@ public class AttendanceGUI extends JFrame {
         tableModel = new DefaultTableModel() {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false;
+                return column == 5; 
             }
         };
         tableModel.addColumn("Student ID");
@@ -59,6 +66,7 @@ public class AttendanceGUI extends JFrame {
         tableModel.addColumn("Fingerprint ID");
         tableModel.addColumn("Status");
         tableModel.addColumn("Last Scan");
+        tableModel.addColumn("Actions");
         
         studentTable = new JTable(tableModel);
         styleTable();
@@ -68,7 +76,6 @@ public class AttendanceGUI extends JFrame {
         scrollPane.getViewport().setBackground(CARD_COLOR);
         
         JPanel statusPanel = createStatusPanel();
-        
         JPanel buttonPanel = createButtonPanel();
         
         mainPanel.add(headerPanel, BorderLayout.NORTH);
@@ -84,10 +91,15 @@ public class AttendanceGUI extends JFrame {
         add(mainPanel);
         
         loadStudentData();
+        checkAndResetAttendance();
+        startDailyResetTimer();
         
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
+                if (resetTimer != null) {
+                    resetTimer.cancel();
+                }
                 if (arduinoPort != null && arduinoPort.isOpen()) {
                     arduinoPort.closePort();
                 }
@@ -97,6 +109,64 @@ public class AttendanceGUI extends JFrame {
         
         setVisible(true);
         setupSerialPort("COM7");	
+    }
+    
+    private void startDailyResetTimer() {
+        resetTimer = new Timer(true);
+        resetTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                checkAndResetAttendance();
+            }
+        }, 0, 60000);
+    }
+    
+    private void checkAndResetAttendance() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalTime currentTime = now.toLocalTime();
+        LocalTime resetTime = LocalTime.of(9, 0);
+        
+        if (currentTime.isAfter(resetTime)) {
+            try {
+                File lastResetFile = new File(LAST_RESET_FILE);
+                LocalDateTime lastReset = null;
+                
+                if (lastResetFile.exists()) {
+                    try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(LAST_RESET_FILE))) {
+                        lastReset = (LocalDateTime) ois.readObject();
+                    }
+                }
+                
+                if (lastReset == null || lastReset.toLocalDate().isBefore(now.toLocalDate())) {
+                    SwingUtilities.invokeLater(() -> {
+                        autoMarkAllAbsent();
+                        saveLastResetTime(now);
+                    });
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    
+    private void saveLastResetTime(LocalDateTime time) {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(LAST_RESET_FILE))) {
+            oos.writeObject(time);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private void autoMarkAllAbsent() {
+        int absentCount = 0;
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            tableModel.setValueAt("Absent", i, 3);
+            tableModel.setValueAt("-", i, 4);
+            absentCount++;
+        }
+        saveStudentData();
+        updateStatus("Auto-reset: All " + absentCount + " students marked as Absent for new day.");
+        System.out.println("Daily auto-reset completed at " + LocalDateTime.now());
     }
     
     private JPanel createHeaderPanel() {
@@ -111,7 +181,7 @@ public class AttendanceGUI extends JFrame {
         titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 28));
         titleLabel.setForeground(HEADER_COLOR);
         
-        connectionLabel = new JLabel("* Connecting...");
+        connectionLabel = new JLabel("● Connecting...");
         connectionLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         connectionLabel.setForeground(TEXT_SECONDARY);
         
@@ -146,14 +216,17 @@ public class AttendanceGUI extends JFrame {
             BorderFactory.createEmptyBorder(10, 15, 10, 15)
         ));
         
+        JButton markAbsentBtn = createStyledButton("Mark All Absent", WARNING_COLOR);
         JButton refreshBtn = createStyledButton("Refresh", PRIMARY_COLOR);
         JButton exportBtn = createStyledButton("Export to CSV", SUCCESS_COLOR);
         JButton clearDataBtn = createStyledButton("Clear All Data", DANGER_COLOR);
         
+        markAbsentBtn.addActionListener(e -> markAllAbsent());
         refreshBtn.addActionListener(e -> loadStudentData());
         exportBtn.addActionListener(e -> exportToCSV());
         clearDataBtn.addActionListener(e -> clearAllData());
         
+        buttonPanel.add(markAbsentBtn);
         buttonPanel.add(refreshBtn);
         buttonPanel.add(exportBtn);
         buttonPanel.add(clearDataBtn);
@@ -186,7 +259,7 @@ public class AttendanceGUI extends JFrame {
     
     private void styleTable() {
         studentTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        studentTable.setRowHeight(40);
+        studentTable.setRowHeight(50);
         studentTable.setShowGrid(false);
         studentTable.setIntercellSpacing(new Dimension(0, 0));
         studentTable.setSelectionBackground(new Color(52, 152, 219, 50));
@@ -205,16 +278,21 @@ public class AttendanceGUI extends JFrame {
         headerRenderer.setForeground(Color.WHITE);
         headerRenderer.setHorizontalAlignment(SwingConstants.CENTER);
         headerRenderer.setOpaque(true);
+
+        headerRenderer.setBorder(
+            BorderFactory.createEmptyBorder(0, 30, 0, 8)
+        );
         
         for (int i = 0; i < studentTable.getColumnCount(); i++) {
             studentTable.getColumnModel().getColumn(i).setHeaderRenderer(headerRenderer);
         }
         
-        studentTable.getColumnModel().getColumn(0).setPreferredWidth(120);
-        studentTable.getColumnModel().getColumn(1).setPreferredWidth(200);
-        studentTable.getColumnModel().getColumn(2).setPreferredWidth(120);
-        studentTable.getColumnModel().getColumn(3).setPreferredWidth(100);
-        studentTable.getColumnModel().getColumn(4).setPreferredWidth(180);
+        studentTable.getColumnModel().getColumn(0).setPreferredWidth(110);
+        studentTable.getColumnModel().getColumn(1).setPreferredWidth(180);
+        studentTable.getColumnModel().getColumn(2).setPreferredWidth(110);
+        studentTable.getColumnModel().getColumn(3).setPreferredWidth(90);
+        studentTable.getColumnModel().getColumn(4).setPreferredWidth(160);
+        studentTable.getColumnModel().getColumn(5).setPreferredWidth(180);
         
         studentTable.getColumnModel().getColumn(3).setCellRenderer(new DefaultTableCellRenderer() {
             @Override
@@ -223,12 +301,17 @@ public class AttendanceGUI extends JFrame {
                 Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
                 setHorizontalAlignment(CENTER);
                 
-                if (value != null && value.toString().equals("Present")) {
-                    setForeground(SUCCESS_COLOR);
-                    setFont(getFont().deriveFont(Font.BOLD));
-                } else {
-                    setForeground(TEXT_SECONDARY);
-                    setFont(getFont().deriveFont(Font.PLAIN));
+                if (value != null) {
+                    if (value.toString().equals("Present")) {
+                        setForeground(SUCCESS_COLOR);
+                        setFont(getFont().deriveFont(Font.BOLD));
+                    } else if (value.toString().equals("Absent")) {
+                        setForeground(DANGER_COLOR);
+                        setFont(getFont().deriveFont(Font.BOLD));
+                    } else {
+                        setForeground(TEXT_SECONDARY);
+                        setFont(getFont().deriveFont(Font.PLAIN));
+                    }
                 }
                 
                 if (!isSelected) {
@@ -239,28 +322,221 @@ public class AttendanceGUI extends JFrame {
             }
         });
         
-        DefaultTableCellRenderer alternatingRenderer = new DefaultTableCellRenderer() {
+        studentTable.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value,
                     boolean isSelected, boolean hasFocus, int row, int column) {
+                
+                JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
+                panel.setOpaque(true);
+                panel.setBackground(row % 2 == 0 ? CARD_COLOR : new Color(248, 249, 250));
+                
+                JButton editBtn = new JButton("Edit");
+                editBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
+                editBtn.setForeground(Color.WHITE);
+                editBtn.setBackground(EDIT_COLOR);
+                editBtn.setFocusPainted(false);
+                editBtn.setBorderPainted(false);
+                editBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                editBtn.setPreferredSize(new Dimension(70, 30));
+                
+                JButton deleteBtn = new JButton("Delete");
+                deleteBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
+                deleteBtn.setForeground(Color.WHITE);
+                deleteBtn.setBackground(DANGER_COLOR);
+                deleteBtn.setFocusPainted(false);
+                deleteBtn.setBorderPainted(false);
+                deleteBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                deleteBtn.setPreferredSize(new Dimension(70, 30));
+                
+                final int currentRow = row;
+                
+                editBtn.addActionListener(e -> editStudent(currentRow));
+                deleteBtn.addActionListener(e -> deleteStudent(currentRow));
+                
+                panel.add(editBtn);
+                panel.add(deleteBtn);
+                
+                return panel;
+            }
+        });
+        
+        DefaultTableCellRenderer leftPaddedTextRenderer = new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(
+                    JTable table, Object value, boolean isSelected,
+                    boolean hasFocus, int row, int column) {
 
-                Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                Component c = super.getTableCellRendererComponent(
+                        table, value, isSelected, hasFocus, row, column);
+
+                setBorder(BorderFactory.createEmptyBorder(0, 40, 0, 8));
+                setHorizontalAlignment(SwingConstants.LEFT);
 
                 if (!isSelected) {
                     setBackground(row % 2 == 0 ? CARD_COLOR : new Color(248, 249, 250));
                 }
 
                 setForeground(TEXT_PRIMARY);
-                setHorizontalAlignment(CENTER);
-
                 return c;
             }
         };
 
+        
         for (int i = 0; i < studentTable.getColumnCount(); i++) {
-            if (i != 3) {
-                studentTable.getColumnModel().getColumn(i).setCellRenderer(alternatingRenderer);
+            if (i != 3 && i != 5) {
+            	studentTable.getColumnModel().getColumn(5)
+                .setCellEditor(new ActionButtonEditor());
             }
+        }
+        
+        studentTable.getColumnModel()
+                .getColumn(0)
+                .setCellRenderer(leftPaddedTextRenderer);
+
+        studentTable.getColumnModel()
+                .getColumn(1)
+                .setCellRenderer(leftPaddedTextRenderer);
+
+        studentTable.getColumnModel()
+                .getColumn(2)
+                .setCellRenderer(leftPaddedTextRenderer);
+    }
+    
+    private class ActionButtonEditor extends AbstractCellEditor implements TableCellEditor {
+
+        private final JPanel panel;
+        private final JButton editBtn;
+        private final JButton deleteBtn;
+        private int currentRow;
+
+        public ActionButtonEditor() {
+            panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 5));
+
+            editBtn = new JButton("Edit");
+            editBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            editBtn.setForeground(Color.WHITE);
+            editBtn.setBackground(EDIT_COLOR);
+            editBtn.setFocusPainted(false);
+            editBtn.setBorderPainted(false);
+            editBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            editBtn.setPreferredSize(new Dimension(70, 30));
+
+            deleteBtn = new JButton("Delete");
+            deleteBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            deleteBtn.setForeground(Color.WHITE);
+            deleteBtn.setBackground(DANGER_COLOR);
+            deleteBtn.setFocusPainted(false);
+            deleteBtn.setBorderPainted(false);
+            deleteBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            deleteBtn.setPreferredSize(new Dimension(70, 30));
+
+            editBtn.addActionListener(e -> {
+                fireEditingStopped();
+                editStudent(currentRow);
+            });
+
+            deleteBtn.addActionListener(e -> {
+                fireEditingStopped();
+                deleteStudent(currentRow);
+            });
+
+            panel.add(editBtn);
+            panel.add(deleteBtn);
+        }
+
+        @Override
+        public Component getTableCellEditorComponent(
+                JTable table,
+                Object value,
+                boolean isSelected,
+                int row,
+                int column) {
+
+            currentRow = row;
+            panel.setBackground(row % 2 == 0 ? CARD_COLOR : new Color(248, 249, 250));
+            return panel;
+        }
+
+        @Override
+        public Object getCellEditorValue() {
+            return null;
+        }
+    }
+
+    
+    private void editStudent(int row) {
+        if (row < 0 || row >= tableModel.getRowCount()) return;
+        
+        String currentName = tableModel.getValueAt(row, 1).toString();
+        String studentID = tableModel.getValueAt(row, 0).toString();
+        
+        String newName = JOptionPane.showInputDialog(
+            this,
+            "Edit Student Name:",
+            currentName
+        );
+        
+        if (newName != null && !newName.trim().isEmpty() && !newName.equals(currentName)) {
+            tableModel.setValueAt(newName.trim(), row, 1);
+            saveStudentData();
+            updateStatus("Updated student name: " + studentID + " to " + newName);
+            showStyledDialog(
+                "Student name updated successfully!\n\nStudent ID: " + studentID + "\nNew Name: " + newName,
+                "Edit Success",
+                JOptionPane.INFORMATION_MESSAGE
+            );
+        }
+    }
+    
+    private void deleteStudent(int row) {
+        if (row < 0 || row >= tableModel.getRowCount()) return;
+        
+        String studentID = tableModel.getValueAt(row, 0).toString();
+        String studentName = tableModel.getValueAt(row, 1).toString();
+        int fingerprintID = Integer.parseInt(tableModel.getValueAt(row, 2).toString());
+        
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "Delete this student?\n\n" +
+            "Student ID: " + studentID + "\n" +
+            "Name: " + studentName + "\n" +
+            "Fingerprint ID: " + fingerprintID + "\n\n" +
+            "This will also delete their fingerprint from the sensor.",
+            "Confirm Delete",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
+        
+        if (confirm == JOptionPane.YES_OPTION) {
+            if (arduinoPort != null && arduinoPort.isOpen()) {
+                try {
+                    String command = "DELETEFP:" + fingerprintID + "\n";
+                    arduinoPort.getOutputStream().write(command.getBytes());
+                    arduinoPort.getOutputStream().flush();
+                    System.out.println("Sent delete command for fingerprint ID: " + fingerprintID);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    showStyledDialog(
+                        "Failed to delete fingerprint from sensor: " + e.getMessage(),
+                        "Sensor Error",
+                        JOptionPane.ERROR_MESSAGE
+                    );
+                }
+            }
+            
+            tableModel.removeRow(row);
+            saveStudentData();
+            
+            updateStatus("Deleted student: " + studentName + " (ID: " + studentID + ")");
+            showStyledDialog(
+                "Student deleted successfully!\n\n" +
+                "Student ID: " + studentID + "\n" +
+                "Name: " + studentName + "\n" +
+                "Fingerprint ID " + fingerprintID + " can now be reused.",
+                "Delete Success",
+                JOptionPane.INFORMATION_MESSAGE
+            );
         }
     }
     
@@ -372,7 +648,8 @@ public class AttendanceGUI extends JFrame {
                     student.name, 
                     student.fingerprintID, 
                     student.status,
-                    student.lastScan
+                    student.lastScan,
+                    ""
                 });
             }
             System.out.println("Loaded " + students.size() + " students from storage.");
@@ -380,6 +657,31 @@ public class AttendanceGUI extends JFrame {
         } catch (IOException | ClassNotFoundException e) {
             e.printStackTrace();
             showStyledDialog("Error loading data: " + e.getMessage(), "Load Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    private void markAllAbsent() {
+        int confirm = JOptionPane.showConfirmDialog(this, 
+            "Mark all students as ABSENT?\n\nThis will reset attendance for a new session.", 
+            "Start New Attendance Session", 
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.QUESTION_MESSAGE);
+        
+        if (confirm == JOptionPane.YES_OPTION) {
+            int absentCount = 0;
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                tableModel.setValueAt("Absent", i, 3);
+                tableModel.setValueAt("-", i, 4);
+                absentCount++;
+            }
+            saveStudentData();
+            saveLastResetTime(LocalDateTime.now());
+            updateStatus("All " + absentCount + " students marked as Absent. Ready for new attendance session.");
+            showStyledDialog(
+                "Attendance Reset!\n\n" + absentCount + " students marked as Absent.\n" +
+                "Students will be marked Present when they scan their fingerprint.",
+                "Session Started", 
+                JOptionPane.INFORMATION_MESSAGE);
         }
     }
     
@@ -391,12 +693,14 @@ public class AttendanceGUI extends JFrame {
             JOptionPane.WARNING_MESSAGE);
         
         if (confirm == JOptionPane.YES_OPTION) {
-
             tableModel.setRowCount(0);
-
             saveStudentData();
+            
             File file = new File(DATA_FILE);
             if (file.exists()) file.delete();
+            
+            File resetFile = new File(LAST_RESET_FILE);
+            if (resetFile.exists()) resetFile.delete();
 
             if (arduinoPort != null && arduinoPort.isOpen()) {
                 try {
@@ -443,7 +747,7 @@ public class AttendanceGUI extends JFrame {
     
     private void updateConnectionStatus(String message, boolean connected) {
         SwingUtilities.invokeLater(() -> {
-            connectionLabel.setText("* " + message);
+            connectionLabel.setText("● " + message);
             connectionLabel.setForeground(connected ? SUCCESS_COLOR : DANGER_COLOR);
         });
     }
@@ -495,14 +799,15 @@ public class AttendanceGUI extends JFrame {
         String studentID = "STU" + String.format("%04d", fingerprintID);
 
         String currentTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        tableModel.addRow(new Object[]{studentID, studentName, fingerprintID, "Present", currentTime});
+        tableModel.addRow(new Object[]{studentID, studentName, fingerprintID, "Present", currentTime, ""});
         saveStudentData();
 
         updateStatus("New student enrolled: " + studentName);
         showStyledDialog(
             "Student Enrolled Successfully!\n\nName: " + studentName +
             "\nStudent ID: " + studentID +
-            "\nFingerprint ID: " + fingerprintID,
+            "\nFingerprint ID: " + fingerprintID +
+            "\n\nAttendance: Present",
             "Enrollment Success",
             JOptionPane.INFORMATION_MESSAGE
         );

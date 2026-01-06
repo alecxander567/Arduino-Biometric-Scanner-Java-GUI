@@ -39,6 +39,19 @@ void setup() {
 }
 
 void loop() {
+  // Check for commands from Java application
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    
+    if (command.startsWith("DELETEFP:")) {
+      int idToDelete = command.substring(9).toInt();
+      deleteFingerprint(idToDelete);
+    } else if (command == "CLEARFP") {
+      clearAllFingerprints();
+    }
+  }
+  
   checkFingerprint();
   delay(500);
 }
@@ -142,6 +155,23 @@ bool enrollNewFingerprint() {
   Serial.println("Enrollment successful!");
   nextID++; 
   return true;
+}
+
+void deleteFingerprint(uint8_t id) {
+  Serial.print("Deleting fingerprint ID #");
+  Serial.println(id);
+  
+  uint8_t p = finger.deleteModel(id);
+  
+  if (p == FINGERPRINT_OK) {
+    Serial.print("Deleted ID #");
+    Serial.println(id);
+    Serial.println("DeleteFP:OK");
+  } else {
+    Serial.print("Failed to delete ID #");
+    Serial.println(id);
+    Serial.println("DeleteFP:FAIL");
+  }
 }
 
 void clearAllFingerprints() {
