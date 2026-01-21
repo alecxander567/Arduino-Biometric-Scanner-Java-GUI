@@ -39,7 +39,6 @@ void setup() {
 }
 
 void loop() {
-  // Check for commands from Java application
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
@@ -74,9 +73,7 @@ void checkFingerprint() {
 
   p = finger.fingerFastSearch();
   if (p == FINGERPRINT_OK) {
-    Serial.print("Found ID #"); 
-    Serial.println(finger.fingerID);
-    Serial.print("NewID:"); 
+    Serial.print("NewID:");
     Serial.println(finger.fingerID);
   } else if (p == FINGERPRINT_NOTFOUND) {
     Serial.println("Fingerprint not found - enrolling new fingerprint...");
@@ -104,7 +101,14 @@ bool enrollNewFingerprint() {
   Serial.println(id);
 
   int p = -1;
+  unsigned long startTime = millis();
   while (p != FINGERPRINT_OK) {
+    if (millis() - startTime > 10000) {
+      Serial.println("Timeout: First scan took too long");
+      Serial.println("EnrollTimeout");
+      return false;
+    }
+    
     p = finger.getImage();
     if (p == FINGERPRINT_NOFINGER) continue;
     if (p != FINGERPRINT_OK) {
@@ -124,8 +128,16 @@ bool enrollNewFingerprint() {
   while (finger.getImage() != FINGERPRINT_NOFINGER);
 
   Serial.println("Place same finger again");
+  
   p = -1;
+  startTime = millis();
   while (p != FINGERPRINT_OK) {
+    if (millis() - startTime > 3000) {
+      Serial.println("Timeout: No finger detected for second scan");
+      Serial.println("EnrollTimeout");
+      return false;
+    }
+    
     p = finger.getImage();
     if (p == FINGERPRINT_NOFINGER) continue;
     if (p != FINGERPRINT_OK) {
@@ -167,6 +179,12 @@ void deleteFingerprint(uint8_t id) {
     Serial.print("Deleted ID #");
     Serial.println(id);
     Serial.println("DeleteFP:OK");
+    
+    if (id == nextID - 1) {
+      nextID--;
+      Serial.print("Reset nextID to: ");
+      Serial.println(nextID);
+    }
   } else {
     Serial.print("Failed to delete ID #");
     Serial.println(id);
